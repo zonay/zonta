@@ -38,6 +38,18 @@ enum SpeechOutput {
     }
 }
 
+/// Whether dictated text goes through the cleanup LLM before it is pasted.
+/// Kept outside `Settings` like `SpeechOutput` so toggling it never rewrites
+/// the settings blob or drops the chat session.
+enum CleanupOutput {
+    private static let key = "cleanup.enabled.v1"
+
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+}
+
 /// The conversation the chat feature is currently in.
 ///
 /// Hermes keeps the chat history in its own session store, not in the request
@@ -86,6 +98,8 @@ struct Settings: Codable, Equatable {
     var whisperAPIKey: String
     var whisperModel: String
     var whisperLanguage: String
+    /// Optional `prompt` form field for speech models that accept one.
+    var whisperPrompt: String
 
     // Cleanup — the LLM that tidies up a dictated transcript
     var sanitizeLLM: LLMConfig
@@ -106,11 +120,41 @@ struct Settings: Codable, Equatable {
     var ttsVoice: String
     var ttsLanguage: String
 
+    /// Explicit memberwise init: the custom decoder below suppresses the
+    /// synthesized one that `defaults` relies on.
+    init(
+        whisperBaseURL: String, whisperAPIKey: String, whisperModel: String,
+        whisperLanguage: String, whisperPrompt: String,
+        sanitizeLLM: LLMConfig, sanitizePrompt: String,
+        chatLLM: LLMConfig, chatPrompt: String,
+        translateLLM: LLMConfig, translatePrompt: String,
+        ttsBaseURL: String, ttsAPIKey: String, ttsModel: String,
+        ttsVoice: String, ttsLanguage: String
+    ) {
+        self.whisperBaseURL = whisperBaseURL
+        self.whisperAPIKey = whisperAPIKey
+        self.whisperModel = whisperModel
+        self.whisperLanguage = whisperLanguage
+        self.whisperPrompt = whisperPrompt
+        self.sanitizeLLM = sanitizeLLM
+        self.sanitizePrompt = sanitizePrompt
+        self.chatLLM = chatLLM
+        self.chatPrompt = chatPrompt
+        self.translateLLM = translateLLM
+        self.translatePrompt = translatePrompt
+        self.ttsBaseURL = ttsBaseURL
+        self.ttsAPIKey = ttsAPIKey
+        self.ttsModel = ttsModel
+        self.ttsVoice = ttsVoice
+        self.ttsLanguage = ttsLanguage
+    }
+
     static let defaults = Settings(
         whisperBaseURL: "http://localhost:6667/v1",
         whisperAPIKey: "",
         whisperModel: "whisper-large-v3-turbo",
         whisperLanguage: "",
+        whisperPrompt: "",
         sanitizeLLM: LLMConfig(
             baseURL: "http://localhost:1235/v1",
             apiKey: "",
@@ -154,6 +198,37 @@ struct Settings: Codable, Equatable {
     private static let v3Key = "settings.v3"
     private static let v2Key = "settings.v2"
     private static let legacyKey = "settings.v1"
+
+    private enum CodingKeys: String, CodingKey {
+        case whisperBaseURL, whisperAPIKey, whisperModel, whisperLanguage, whisperPrompt
+        case sanitizeLLM, sanitizePrompt
+        case chatLLM, chatPrompt
+        case translateLLM, translatePrompt
+        case ttsBaseURL, ttsAPIKey, ttsModel, ttsVoice, ttsLanguage
+    }
+
+    /// Old blobs have no `whisperPrompt`. Missing keys fall back to defaults
+    /// so adding this field never makes `load()` discard the user's settings.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Settings.defaults
+        whisperBaseURL = try c.decodeIfPresent(String.self, forKey: .whisperBaseURL) ?? d.whisperBaseURL
+        whisperAPIKey = try c.decodeIfPresent(String.self, forKey: .whisperAPIKey) ?? d.whisperAPIKey
+        whisperModel = try c.decodeIfPresent(String.self, forKey: .whisperModel) ?? d.whisperModel
+        whisperLanguage = try c.decodeIfPresent(String.self, forKey: .whisperLanguage) ?? d.whisperLanguage
+        whisperPrompt = try c.decodeIfPresent(String.self, forKey: .whisperPrompt) ?? d.whisperPrompt
+        sanitizeLLM = try c.decodeIfPresent(LLMConfig.self, forKey: .sanitizeLLM) ?? d.sanitizeLLM
+        sanitizePrompt = try c.decodeIfPresent(String.self, forKey: .sanitizePrompt) ?? d.sanitizePrompt
+        chatLLM = try c.decodeIfPresent(LLMConfig.self, forKey: .chatLLM) ?? d.chatLLM
+        chatPrompt = try c.decodeIfPresent(String.self, forKey: .chatPrompt) ?? d.chatPrompt
+        translateLLM = try c.decodeIfPresent(LLMConfig.self, forKey: .translateLLM) ?? d.translateLLM
+        translatePrompt = try c.decodeIfPresent(String.self, forKey: .translatePrompt) ?? d.translatePrompt
+        ttsBaseURL = try c.decodeIfPresent(String.self, forKey: .ttsBaseURL) ?? d.ttsBaseURL
+        ttsAPIKey = try c.decodeIfPresent(String.self, forKey: .ttsAPIKey) ?? d.ttsAPIKey
+        ttsModel = try c.decodeIfPresent(String.self, forKey: .ttsModel) ?? d.ttsModel
+        ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice) ?? d.ttsVoice
+        ttsLanguage = try c.decodeIfPresent(String.self, forKey: .ttsLanguage) ?? d.ttsLanguage
+    }
 
     /// Old builds shipped "M1" as the default voice. Move that (and an empty
     /// value) to the new default without touching a deliberately typed name.

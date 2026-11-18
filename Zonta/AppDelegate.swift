@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
 
         let model = AppModel.shared
+        Notifier.shared.configure()
         model.boot()
         model.$phase
             .receive(on: RunLoop.main)
@@ -72,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             speechItem.target = self
             menu.addItem(speechItem)
+            let cleanupItem = NSMenuItem(
+                title: AppModel.shared.cleanupEnabled ? "Disable Cleanup" : "Enable Cleanup",
+                action: #selector(toggleCleanup), keyEquivalent: ""
+            )
+            cleanupItem.target = self
+            menu.addItem(cleanupItem)
             menu.addItem(NSMenuItem.separator())
             let quitItem = NSMenuItem(title: "Quit Zonta", action: #selector(quit), keyEquivalent: "")
             quitItem.target = self
@@ -92,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleSpeech() {
         let model = AppModel.shared
         model.setSpeechEnabled(!model.speechEnabled)
+    }
+    @objc private func toggleCleanup() {
+        let model = AppModel.shared
+        model.setCleanupEnabled(!model.cleanupEnabled)
     }
     @objc private func quit() { NSApp.terminate(nil) }
 

@@ -5,10 +5,10 @@ cd "$(dirname "$0")"
 
 OUT="$HOME/Desktop/Zonta"
 
-# For a bundle that runs on other Macs, pass a "Developer ID Application"
-# identity as the first argument, or set SIGN_IDENTITY. A local "Apple
-# Development" certificate is not trusted elsewhere, and an ad-hoc signature
-# is unique to this build. With neither, build.sh falls back to ad-hoc.
+# build.sh defaults to the stable "Developer ID Application" identity so the
+# signed bundle keeps the same designated requirement across rebuilds and does
+# not re-trigger macOS permission prompts. Override with the first argument or
+# SIGN_IDENTITY; pass "-" only for a throwaway ad-hoc build.
 SIGN_ID="${1:-${SIGN_IDENTITY:-}}"
 
 ./build.sh "$SIGN_ID"

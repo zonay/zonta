@@ -141,6 +141,16 @@ struct SettingsView: View {
             Text("Leave the language empty to let the model detect it. Press Right ⌘ to dictate.")
         }
 
+        Section {
+            TextEditor(text: $settings.whisperPrompt)
+                .font(.body.monospaced())
+                .frame(minHeight: 80)
+        } header: {
+            Label("Transcription prompt", systemImage: "text.quote")
+        } footer: {
+            Text("Sent as the optional `prompt` form field. Leave empty for models that do not accept it; speech models can use it for punctuation and capitalization.")
+        }
+
         testSection(.dictation, action: "Test endpoint") {
             let models = try await Probe.models(
                 baseURL: settings.whisperBaseURL,
@@ -152,6 +162,17 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var cleanupFields: some View {
+        Section {
+            Toggle("Clean up dictated text", isOn: Binding(
+                get: { model.cleanupEnabled },
+                set: { model.setCleanupEnabled($0) }
+            ))
+        } header: {
+            Label("Output", systemImage: "wand.and.stars")
+        } footer: {
+            Text("When off, the raw Whisper transcript is pasted with no cleanup call.")
+        }
+
         Section {
             TextField("Base URL", text: $settings.sanitizeLLM.baseURL)
             KeyField("API key", text: $settings.sanitizeLLM.apiKey)
