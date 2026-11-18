@@ -34,6 +34,8 @@ final class AppModel: ObservableObject {
     @Published var speechLog: [SpeechEntry] = []
     /// Whether chat answers are read out loud. Off still logs the answer.
     @Published var speechEnabled: Bool = SpeechOutput.enabled
+    /// Whether dictated text is cleaned up before pasting. Off pastes raw text.
+    @Published var cleanupEnabled: Bool = CleanupOutput.enabled
 
     private let hotkey = Hotkey()
     private let recorder = Recorder()
@@ -59,6 +61,10 @@ final class AppModel: ObservableObject {
         queue.onError = { [weak self] title, message in
             self?.lastError = "\(title): \(message)"
         }
+        AppLog.shared.info(
+            "Accessibility granted: \(Pasteboard.accessibilityGranted)",
+            subsystem: "Permissions"
+        )
         if !Pasteboard.accessibilityGranted {
             Pasteboard.requestAccessibility()
         }
@@ -71,6 +77,7 @@ final class AppModel: ObservableObject {
         LocalNetwork.requestAccess()
         hotkey.onGlobeDown = { [weak self] in self?.begin(.chat) }
         hotkey.onGlobeUp = { [weak self] in self?.end() }
+        hotkey.onGlobeDoubleTap = { [weak self] in self?.newChatThread() }
         hotkey.onRightCommandDown = { [weak self] in self?.begin(.dictate) }
         hotkey.onRightCommandUp = { [weak self] in self?.end() }
         hotkey.onRightCommandCancel = { [weak self] in self?.cancel() }
@@ -255,12 +262,17 @@ final class AppModel: ObservableObject {
     }
 
     private func enqueueDictate(_ transcript: String, settings: Settings) {
+        // Snapshot the switch with the settings so toggling it mid-job cannot
+        // change what this recording does.
+        let cleanup = cleanupEnabled
         queue.enqueue(
-            lane: .dictation, kind: .dictate, title: "Clean up & paste"
+            lane: .dictation,
+            kind: .dictate,
+            title: cleanup ? "Clean up & paste" : "Paste transcript"
         ) { [weak self] in
             guard let self else { return }
             var text = transcript
-            if !settings.sanitizePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if cleanup && !settings.sanitizePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
                     if let cleaned = try await Sanitize.run(transcript: transcript, settings: settings),
                        !cleaned.isEmpty { text = cleaned }
@@ -322,10 +334,24 @@ final class AppModel: ObservableObject {
         speechLog.removeAll()
     }
 
+    /// Globe (fn) double-tap: drop the current thread without recording.
+    private func newChatThread() {
+        AppLog.shared.info("Globe double-tap: starting a new chat thread", subsystem: "Chat")
+        newChatConversation()
+    }
+
     /// Drops the current conversation. The next question starts a new one.
     func newChatConversation() {
+        // An in-flight reply would write its old session id back into the
+        // freshly reset conversation, so stop chat work first.
+        queue.cancel(lane: .chat)
         ChatSession.reset()
         chatSessionID = nil
+        refreshPhase()
+        Notifier.shared.post(
+            title: "New chat thread",
+            body: "Hermes context cleared. Your next question starts fresh."
+        )
         AppLog.shared.info("Started a new conversation", subsystem: "Chat")
     }
 
@@ -343,6 +369,16 @@ final class AppModel: ObservableObject {
                 subsystem: "Speech"
             )
         }
+    }
+
+    func setCleanupEnabled(_ enabled: Bool) {
+        guard enabled != cleanupEnabled else { return }
+        cleanupEnabled = enabled
+        CleanupOutput.enabled = enabled
+        AppLog.shared.info(
+            enabled ? "Cleanup enabled" : "Cleanup disabled; raw transcripts will be pasted.",
+            subsystem: "Dictate"
+        )
     }
 
     func update(_ settings: Settings) {

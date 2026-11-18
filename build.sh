@@ -8,12 +8,16 @@ APP="build/Zonta.app"
 BIN="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
 # A stable signing identity keeps TCC grants (microphone, accessibility, local
-# network) across rebuilds. Pass one as the first argument, or set SIGN_IDENTITY.
-# With neither, an ad-hoc signature is used: free, but macOS treats every
-# rebuild as a new app and asks for the permissions again.
-IDENTITY="${1:-${SIGN_IDENTITY:-}}"
+# network) across rebuilds. Ad-hoc signing makes macOS treat every rebuild as a
+# new app, so the permission prompts return each time. The default matches the
+# installed app's identity and bundle id, so dev inherits its grants/settings.
+# Override with the first argument or SIGN_IDENTITY; pass "-" for ad-hoc.
+DEFAULT_IDENTITY="Developer ID Application: ZAFER ONAY (TP7C938GZF)"
+IDENTITY="${1:-${SIGN_IDENTITY:-$DEFAULT_IDENTITY}}"
 
-if [[ -n "$IDENTITY" ]]; then
+if [[ "$IDENTITY" == "-" ]]; then
+  echo "==> ad-hoc signature requested" >&2
+elif [[ -n "$IDENTITY" ]]; then
   if ! security find-identity -v -p codesigning | grep -qF "\"$IDENTITY\""; then
     echo "ERROR: signing identity not found: $IDENTITY" >&2
     echo "Pass a valid one: ./build.sh 'Developer ID Application: Name (TEAMID)'" >&2
@@ -30,6 +34,7 @@ echo "==> compiling"
 swiftc -O -parse-as-library -module-cache-path "$PWD/build/ModuleCache" \
   -framework AppKit -framework SwiftUI -framework AVFoundation \
   -framework ApplicationServices -framework CoreGraphics -framework Network \
+  -framework UserNotifications \
   -o "$BIN/Zonta" \
   Zonta/*.swift
 
@@ -56,3 +61,21 @@ fi
 codesign "${SIGN_ARGS[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "==> signed with $(codesign -dvv "$APP" 2>&1 | grep '^Authority=' | head -1)"
+
+# A different bundle id or team changes the designated requirement, which
+# makes macOS treat every rebuild as a brand-new app and re-ask every TCC
+# grant (microphone, accessibility, local network, notifications). Fail the
+# build instead of silently producing an app that prompts again.
+if [[ "$IDENTITY" != "-" ]]; then
+  BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Zonta/Info.plist)"
+  TEAM="$(printf '%s' "$IDENTITY" | sed -n 's/.*(\([A-Z0-9]*\))$/\1/p')"
+  REQ="$(codesign -d --requirements - "$APP" 2>&1)"
+  if [[ -z "$TEAM" || "$REQ" != *"identifier \"$BUNDLE\""* || "$REQ" != *"$TEAM"* ]]; then
+    echo "ERROR: signature drift — Info.plist is $BUNDLE but the signature is for $TEAM." >&2
+    echo "       TCC grants would reset on every rebuild. Fix the identity/bundle id." >&2
+    exit 1
+  fi
+  echo "==> stable identity verified: $BUNDLE / team $TEAM"
+else
+  echo "==> WARNING: ad-hoc build — macOS will re-ask permissions after this rebuild." >&2
+fi

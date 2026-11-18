@@ -5,7 +5,8 @@ import Foundation
 
 /// Hold-to-talk for the modifiers that are not already busy typing.
 ///
-/// - Globe (fn) is the voice chat.
+/// - Globe (fn) is the voice chat. Two quick Globe taps start a fresh chat
+///   thread (clean context) without recording.
 /// - Right Command is dictation.
 /// - Right Option is translation.
 ///
@@ -17,6 +18,7 @@ import Foundation
 final class Hotkey {
     var onGlobeDown: (() -> Void)?
     var onGlobeUp: (() -> Void)?
+    var onGlobeDoubleTap: (() -> Void)?
     var onRightCommandDown: (() -> Void)?
     var onRightCommandUp: (() -> Void)?
     var onRightCommandCancel: (() -> Void)?
@@ -32,6 +34,9 @@ final class Hotkey {
     private var runLoopSource: CFRunLoopSource?
 
     private var globeHeld = false
+    private var lastGlobeDown: Date?
+    /// The second tap of a double-tap must not start or stop a recording.
+    private var suppressGlobeUp = false
     private var pending: Side?
     private var active: Side?
     private var pendingTask: Task<Void, Never>?
@@ -70,6 +75,8 @@ final class Hotkey {
         pending = nil
         active = nil
         globeHeld = false
+        lastGlobeDown = nil
+        suppressGlobeUp = false
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         }
@@ -84,7 +91,28 @@ final class Hotkey {
         let globe = event.modifierFlags.contains(.function)
         if globe != globeHeld {
             globeHeld = globe
-            if globe { onGlobeDown?() } else { onGlobeUp?() }
+            if globe {
+                let now = Date()
+                let isDoubleTap = lastGlobeDown.map {
+                    now.timeIntervalSince($0) <= NSEvent.doubleClickInterval
+                } ?? false
+                // Clear the anchor after a double-tap so a third tap is a
+                // fresh press, not a second double-tap.
+                lastGlobeDown = isDoubleTap ? nil : now
+                if isDoubleTap {
+                    // Two quick taps mean "new thread": skip the recording on
+                    // this press and ignore its release.
+                    suppressGlobeUp = true
+                    onGlobeDoubleTap?()
+                } else {
+                    suppressGlobeUp = false
+                    onGlobeDown?()
+                }
+            } else if suppressGlobeUp {
+                suppressGlobeUp = false
+            } else {
+                onGlobeUp?()
+            }
         }
 
         let side: Side

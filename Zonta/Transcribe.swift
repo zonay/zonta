@@ -29,6 +29,8 @@ enum Transcribe {
         field("response_format", "json")
         let language = settings.whisperLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
         if !language.isEmpty { field("language", language) }
+        let prompt = settings.whisperPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !prompt.isEmpty { field("prompt", prompt) }
 
         body.append("--\(boundary)\r\n")
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\n")
