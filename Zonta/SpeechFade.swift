@@ -1,5 +1,12 @@
 import Foundation
 
+/// How long the next answer waits before it speaks.
+enum SpeechTiming {
+    static func waitBeforeAnswer(interrupted: Bool) -> Duration {
+        interrupted ? .seconds(1.5) : .zero
+    }
+}
+
 /// Eases an audio player's volume from its current level down to zero in
 /// small steps. Pure enough to test without real audio hardware.
 @MainActor

@@ -9,6 +9,8 @@ struct SpeechFadeTests {
         check(levels.last == 0, "levels end at zero")
         check(levels == levels.sorted(by: >=), "levels decrease monotonically")
         check(SpeechFade.levels(from: 0.5).first! == 0.45, "first step starts at the current level")
+        check(SpeechTiming.waitBeforeAnswer(interrupted: true) == .seconds(1.5), "interrupted answer waits 1.5s")
+        check(SpeechTiming.waitBeforeAnswer(interrupted: false) == .zero, "normal answer has no wait")
 
         do {
             var writes: [Float] = []
