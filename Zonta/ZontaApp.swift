@@ -76,8 +76,8 @@ final class AppModel: ObservableObject {
         // on every launch is what made this feel like a permission loop.
         LocalNetwork.requestAccess()
         hotkey.onDown = { [weak self] key in self?.handleHotkeyDown(key) }
-        hotkey.onUp = { [weak self] _ in self?.end() }
-        hotkey.onCancel = { [weak self] _ in self?.cancel() }
+        hotkey.onUp = { [weak self] key in self?.handleHotkeyUp(key) }
+        hotkey.onCancel = { [weak self] key in self?.handleHotkeyCancel(key) }
         hotkey.onDoubleTap = { [weak self] _ in self?.newChatThread() }
         applyHotkeyBindings()
         hotkey.start()
@@ -97,6 +97,17 @@ final class AppModel: ObservableObject {
         case .translate: begin(.translate)
         case .off: break
         }
+    }
+
+    /// An Off key must not end a recording started by another key.
+    private func handleHotkeyUp(_ key: HotkeyKey) {
+        guard settings.hotkeys.isEnabled(key) else { return }
+        end()
+    }
+
+    private func handleHotkeyCancel(_ key: HotkeyKey) {
+        guard settings.hotkeys.isEnabled(key) else { return }
+        cancel()
     }
 
     // MARK: - Recording

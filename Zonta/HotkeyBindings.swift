@@ -70,6 +70,12 @@ struct HotkeyBindings: Codable, Equatable {
         }
     }
 
+    /// An Off key must be completely inert, including not ending a recording
+    /// started by another key.
+    func isEnabled(_ key: HotkeyKey) -> Bool {
+        action(for: key) != .off
+    }
+
     /// Every key bound to an action — a user may bind the same action twice.
     func keys(for action: HotkeyAction) -> Set<HotkeyKey> {
         var result: Set<HotkeyKey> = []

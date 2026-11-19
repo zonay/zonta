@@ -45,16 +45,18 @@ final class Hotkey {
         Int(kVK_Function),
     ]
 
-    /// Applies the current bindings. Clears transient state so a live rebind
-    /// cannot leave a stale double-tap anchor or a pending hold behind.
+    /// Applies the current bindings. Ends any hold that is still active so a
+    /// live rebind cannot leave the recorder running with no release to come.
+    /// `pressed` is kept: it mirrors the physical keys and lets the release of
+    /// a key held across the rebind be seen as a release, not a new press.
     func configure(doubleTapKeys: Set<HotkeyKey>) {
+        if let active { onCancel?(active) }
         pendingTask?.cancel()
         pendingTask = nil
         pending = nil
         active = nil
         lastPress.removeAll()
         suppressed.removeAll()
-        pressed.removeAll()
         self.doubleTapKeys = doubleTapKeys
     }
 
@@ -112,7 +114,8 @@ final class Hotkey {
     }
 
     /// Edge-triggered press/release handling shared by every key.
-    private func process(key: HotkeyKey, pressed isPressed: Bool) {
+    /// Internal so the state machine can be exercised by tests.
+    func process(key: HotkeyKey, pressed isPressed: Bool) {
         guard isPressed != pressed.contains(key) else { return }
 
         if isPressed {

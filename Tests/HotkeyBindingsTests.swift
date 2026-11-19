@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct HotkeyBindingsTests {
-    static func main() throws {
+    static func main() async throws {
         check(HotkeyBindings.defaults.globe == .chat, "default globe")
         check(HotkeyBindings.defaults.rightCommand == .dictate, "default right command")
         check(HotkeyBindings.defaults.rightOption == .translate, "default right option")
@@ -12,6 +12,8 @@ struct HotkeyBindingsTests {
         check(b.action(for: .rightCommand) == .off, "action(for: .rightCommand)")
         check(b.keys(for: .chat) == [.rightOption], "keys(for: .chat)")
         check(b.keys(for: .off) == [.rightCommand], "keys(for: .off)")
+        check(b.isEnabled(.globe) == true, "isEnabled: bound key")
+        check(b.isEnabled(.rightCommand) == false, "isEnabled: Off key")
 
         let round = try JSONDecoder().decode(
             HotkeyBindings.self, from: JSONEncoder().encode(b)
@@ -38,6 +40,8 @@ struct HotkeyBindingsTests {
         check(settings.hotkeys == .defaults, "old Settings blob gets default hotkeys")
         check(settings.whisperModel == "my-model", "old Settings blob keeps other fields")
 
+        await reconfigureWhileActiveTest()
+
         print("all hotkey binding tests passed")
     }
 
@@ -53,4 +57,25 @@ private func compileTimeHotkeyInterface(_ hotkey: Hotkey) {
     hotkey.onCancel = { (_: HotkeyKey) in }
     hotkey.onDoubleTap = { (_: HotkeyKey) in }
     hotkey.configure(doubleTapKeys: [.globe])
+}
+
+/// A settings save landing while a hold is active must end it, not silently
+/// drop the active state and leave the recorder running.
+@MainActor
+private func reconfigureWhileActiveTest() async {
+    let hotkey = Hotkey()
+    hotkey.configure(doubleTapKeys: [])
+    var downs: [HotkeyKey] = []
+    var cancels: [HotkeyKey] = []
+    hotkey.onDown = { downs.append($0) }
+    hotkey.onCancel = { cancels.append($0) }
+
+    hotkey.process(key: .rightCommand, pressed: true)
+    try? await Task.sleep(for: .milliseconds(320))
+    if downs != [.rightCommand] { fatalError("FAILED: hold never became active") }
+
+    hotkey.configure(doubleTapKeys: [])
+    if cancels != [.rightCommand] {
+        fatalError("FAILED: reconfigure while active did not cancel the hold")
+    }
 }
