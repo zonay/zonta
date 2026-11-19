@@ -6,8 +6,10 @@ recognition, language processing and speech synthesis.
 
 ## Install
 
-1. Move `Zonta.app` to Applications. `Install to Applications.command` does
-   this and opens the app.
+Download the signed installer: [Zonta.dmg](https://github.com/zonay/zonta/releases/latest/download/Zonta.dmg)
+
+1. Open the DMG and move `Zonta.app` to Applications. If you received a zip
+   instead, `Install to Applications.command` does the same.
 2. On first launch, allow microphone, accessibility and local network access.
 3. Quit and reopen the app after granting permissions.
 

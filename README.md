@@ -8,6 +8,14 @@ sent to configured OpenAI-compatible HTTP services.
 No models or credentials are bundled. All endpoints, keys, models and prompts
 are entered in Settings.
 
+## Download
+
+Signed and notarized installer: [Zonta.dmg](https://github.com/zonay/zonta/releases/latest/download/Zonta.dmg)
+
+Open the DMG and drag Zonta.app to Applications. On first launch, allow
+microphone, accessibility and local network access, then quit and reopen the
+app.
+
 ## Requirements
 
 - macOS 14 or later
