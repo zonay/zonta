@@ -7,7 +7,7 @@ struct SettingsView: View {
         case chat = "Chat"
         case translate = "Translate"
         case speech = "Speech"
-        case shortcuts = "Shortcuts"
+        case settings = "Settings"
 
         var id: String { rawValue }
 
@@ -18,7 +18,7 @@ struct SettingsView: View {
             case .chat: return "bubble.left.and.bubble.right"
             case .translate: return "character.book.closed"
             case .speech: return "speaker.wave.2"
-            case .shortcuts: return "keyboard"
+            case .settings: return "keyboard"
             }
         }
     }
@@ -64,7 +64,7 @@ struct SettingsView: View {
                 case .chat: chatFields
                 case .translate: translateFields
                 case .speech: speechFields
-                case .shortcuts: shortcutFields
+                case .settings: settingsFields
                 }
             }
             .formStyle(.grouped)
@@ -179,17 +179,6 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var cleanupFields: some View {
-        Section {
-            Toggle("Clean up dictated text", isOn: Binding(
-                get: { model.cleanupEnabled },
-                set: { model.setCleanupEnabled($0) }
-            ))
-        } header: {
-            Label("Output", systemImage: "wand.and.stars")
-        } footer: {
-            Text("When off, the raw Whisper transcript is pasted with no cleanup call.")
-        }
-
         Section {
             TextField("Base URL", text: $settings.sanitizeLLM.baseURL)
             KeyField("API key", text: $settings.sanitizeLLM.apiKey)
@@ -322,17 +311,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var speechFields: some View {
         Section {
-            Toggle("Speak answers out loud", isOn: Binding(
-                get: { model.speechEnabled },
-                set: { model.setSpeechEnabled($0) }
-            ))
-        } header: {
-            Label("Output", systemImage: "speaker.wave.2")
-        } footer: {
-            Text("When off, answers are still shown in the speech panel so you can read and copy them.")
-        }
-
-        Section {
             TextField("Base URL", text: $settings.ttsBaseURL)
             KeyField("API key", text: $settings.ttsAPIKey)
             TextField("Model", text: $settings.ttsModel)
@@ -367,7 +345,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var shortcutFields: some View {
+    private var settingsFields: some View {
         Section {
             Picker("Globe", selection: $settings.hotkeys.globe) {
                 ForEach(HotkeyAction.allCases) { action in
@@ -388,6 +366,25 @@ struct SettingsView: View {
             Label("Keyboard shortcuts", systemImage: "keyboard")
         } footer: {
             Text("Double-tap the Chat key to start a new thread. Choose Off to disable a key. Changes apply as soon as you save.")
+        }
+
+        Section {
+            Toggle("Speak answers out loud", isOn: Binding(
+                get: { model.speechEnabled },
+                set: { model.setSpeechEnabled($0) }
+            ))
+            Toggle("Clean up dictated text", isOn: Binding(
+                get: { model.cleanupEnabled },
+                set: { model.setCleanupEnabled($0) }
+            ))
+            Toggle("Duck other audio while recording", isOn: Binding(
+                get: { model.duckAudioEnabled },
+                set: { model.setDuckAudioEnabled($0) }
+            ))
+        } header: {
+            Label("Switches", systemImage: "switch.2")
+        } footer: {
+            Text("Ducking eases the system volume down while a recording is in progress, then brings it back when you release the key.")
         }
     }
 
