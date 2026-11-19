@@ -45,3 +45,12 @@ struct HotkeyBindingsTests {
         if !condition() { fatalError("FAILED: \(label)") }
     }
 }
+
+@MainActor
+private func compileTimeHotkeyInterface(_ hotkey: Hotkey) {
+    hotkey.onDown = { (_: HotkeyKey) in }
+    hotkey.onUp = { (_: HotkeyKey) in }
+    hotkey.onCancel = { (_: HotkeyKey) in }
+    hotkey.onDoubleTap = { (_: HotkeyKey) in }
+    hotkey.configure(doubleTapKeys: [.globe])
+}

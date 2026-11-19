@@ -3,42 +3,35 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
-/// Hold-to-talk for the modifiers that are not already busy typing.
-///
-/// - Globe (fn) is the voice chat. Two quick Globe taps start a fresh chat
-///   thread (clean context) without recording.
-/// - Right Command is dictation.
-/// - Right Option is translation.
+/// Hold-to-talk for the modifier keys that are not already busy typing.
 ///
 /// A modifier only counts as a hold when it is pressed for a moment and no
 /// other key follows. Option in particular is how accented characters are
 /// typed, so Option+e must never start a recording. A session event tap
 /// catches that other key and cancels the pending start.
+///
+/// Globe fires immediately on press and release. Right Command and Right
+/// Option use a short hold delay. A quick double-press of a configured key
+/// fires `onDoubleTap` (new chat thread) instead of a hold.
 @MainActor
 final class Hotkey {
-    var onGlobeDown: (() -> Void)?
-    var onGlobeUp: (() -> Void)?
-    var onGlobeDoubleTap: (() -> Void)?
-    var onRightCommandDown: (() -> Void)?
-    var onRightCommandUp: (() -> Void)?
-    var onRightCommandCancel: (() -> Void)?
-    var onRightOptionDown: (() -> Void)?
-    var onRightOptionUp: (() -> Void)?
-    var onRightOptionCancel: (() -> Void)?
-
-    private enum Side { case command, option }
+    var onDown: ((HotkeyKey) -> Void)?
+    var onUp: ((HotkeyKey) -> Void)?
+    var onCancel: ((HotkeyKey) -> Void)?
+    var onDoubleTap: ((HotkeyKey) -> Void)?
 
     private var monitor: Any?
     private var global: Any?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    private var globeHeld = false
-    private var lastGlobeDown: Date?
-    /// The second tap of a double-tap must not start or stop a recording.
-    private var suppressGlobeUp = false
-    private var pending: Side?
-    private var active: Side?
+    /// Keys whose quick double-press means "new chat thread".
+    private var doubleTapKeys: Set<HotkeyKey> = []
+    private var lastPress: [HotkeyKey: Date] = [:]
+    private var suppressed: Set<HotkeyKey> = []
+    private var pressed: Set<HotkeyKey> = []
+    private var pending: HotkeyKey?
+    private var active: HotkeyKey?
     private var pendingTask: Task<Void, Never>?
 
     /// How long a modifier must be held before it counts.
@@ -51,6 +44,19 @@ final class Hotkey {
         Int(kVK_Command), Int(kVK_RightCommand),
         Int(kVK_Function),
     ]
+
+    /// Applies the current bindings. Clears transient state so a live rebind
+    /// cannot leave a stale double-tap anchor or a pending hold behind.
+    func configure(doubleTapKeys: Set<HotkeyKey>) {
+        pendingTask?.cancel()
+        pendingTask = nil
+        pending = nil
+        active = nil
+        lastPress.removeAll()
+        suppressed.removeAll()
+        pressed.removeAll()
+        self.doubleTapKeys = doubleTapKeys
+    }
 
     func start() {
         stop()
@@ -74,9 +80,9 @@ final class Hotkey {
         pendingTask = nil
         pending = nil
         active = nil
-        globeHeld = false
-        lastGlobeDown = nil
-        suppressGlobeUp = false
+        lastPress.removeAll()
+        suppressed.removeAll()
+        pressed.removeAll()
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         }
@@ -88,50 +94,60 @@ final class Hotkey {
     // MARK: - Events
 
     private func handle(_ event: NSEvent) {
-        let globe = event.modifierFlags.contains(.function)
-        if globe != globeHeld {
-            globeHeld = globe
-            if globe {
-                let now = Date()
-                let isDoubleTap = lastGlobeDown.map {
-                    now.timeIntervalSince($0) <= NSEvent.doubleClickInterval
-                } ?? false
-                // Clear the anchor after a double-tap so a third tap is a
-                // fresh press, not a second double-tap.
-                lastGlobeDown = isDoubleTap ? nil : now
-                if isDoubleTap {
-                    // Two quick taps mean "new thread": skip the recording on
-                    // this press and ignore its release.
-                    suppressGlobeUp = true
-                    onGlobeDoubleTap?()
-                } else {
-                    suppressGlobeUp = false
-                    onGlobeDown?()
-                }
-            } else if suppressGlobeUp {
-                suppressGlobeUp = false
-            } else {
-                onGlobeUp?()
-            }
-        }
+        process(key: .globe, pressed: event.modifierFlags.contains(.function))
 
-        let side: Side
+        let side: HotkeyKey
         switch event.keyCode {
-        case UInt16(kVK_RightCommand): side = .command
-        case UInt16(kVK_RightOption): side = .option
+        case UInt16(kVK_RightCommand): side = .rightCommand
+        case UInt16(kVK_RightOption): side = .rightOption
         default: return
         }
-
-        let pressed: Bool
+        let isPressed: Bool
         switch side {
-        case .command: pressed = event.modifierFlags.contains(.command)
-        case .option: pressed = event.modifierFlags.contains(.option)
+        case .rightCommand: isPressed = event.modifierFlags.contains(.command)
+        case .rightOption: isPressed = event.modifierFlags.contains(.option)
+        case .globe: return
         }
+        process(key: side, pressed: isPressed)
+    }
 
-        if pressed {
-            if active != side { beginHold(side) }
+    /// Edge-triggered press/release handling shared by every key.
+    private func process(key: HotkeyKey, pressed isPressed: Bool) {
+        guard isPressed != pressed.contains(key) else { return }
+
+        if isPressed {
+            pressed.insert(key)
+
+            if doubleTapKeys.contains(key),
+               let last = lastPress[key],
+               Date().timeIntervalSince(last) <= NSEvent.doubleClickInterval {
+                // Two quick presses: skip the hold on this press and ignore
+                // its release. A third press is a fresh hold again.
+                lastPress[key] = nil
+                suppressed.insert(key)
+                cancelPending()
+                if active == key { active = nil }
+                onDoubleTap?(key)
+                return
+            }
+
+            lastPress[key] = Date()
+            if key == .globe {
+                onDown?(key)
+            } else {
+                beginHold(key)
+            }
         } else {
-            release(side)
+            pressed.remove(key)
+            if suppressed.contains(key) {
+                suppressed.remove(key)
+                return
+            }
+            if key == .globe {
+                onUp?(key)
+            } else {
+                release(key)
+            }
         }
     }
 
@@ -139,7 +155,7 @@ final class Hotkey {
         let keyCode = Int(event.getIntegerValueField(CGEventField.keyboardEventKeycode))
         guard !Self.modifierKeyCodes.contains(keyCode) else { return }
         // Another key went down while a modifier was held. That is a shortcut,
-        // not dictation.
+        // not a recording.
         if pending != nil {
             cancelPending()
         } else if active != nil {
@@ -149,18 +165,15 @@ final class Hotkey {
 
     // MARK: - Hold state
 
-    private func beginHold(_ side: Side) {
+    private func beginHold(_ key: HotkeyKey) {
         pendingTask?.cancel()
-        pending = side
+        pending = key
         pendingTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: Hotkey.holdDelay)
-            guard let self, !Task.isCancelled, self.pending == side, self.active == nil else { return }
+            guard let self, !Task.isCancelled, self.pending == key, self.active == nil else { return }
             self.pending = nil
-            self.active = side
-            switch side {
-            case .command: self.onRightCommandDown?()
-            case .option: self.onRightOptionDown?()
-            }
+            self.active = key
+            self.onDown?(key)
         }
     }
 
@@ -170,24 +183,18 @@ final class Hotkey {
         pending = nil
     }
 
-    private func release(_ side: Side) {
+    private func release(_ key: HotkeyKey) {
         cancelPending()
-        guard active == side else { return }
+        guard active == key else { return }
         active = nil
-        switch side {
-        case .command: onRightCommandUp?()
-        case .option: onRightOptionUp?()
-        }
+        onUp?(key)
     }
 
     private func abort() {
         cancelPending()
-        guard let side = active else { return }
+        guard let key = active else { return }
         active = nil
-        switch side {
-        case .command: onRightCommandCancel?()
-        case .option: onRightOptionCancel?()
-        }
+        onCancel?(key)
     }
 
     // MARK: - Key tap
