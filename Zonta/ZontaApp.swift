@@ -45,6 +45,8 @@ final class AppModel: ObservableObject {
     private let queue = JobQueue.shared
     private var didBoot = false
     private var mode: Mode?
+    /// The next answer followed an interrupted one, so let it settle first.
+    private var interruptedSpeech = false
     /// Source of truth for the hold-to-talk state. Kept separate from `phase`
     /// so a job finishing can never pretend a new recording ended.
     @Published private var isRecording = false
@@ -124,8 +126,14 @@ final class AppModel: ObservableObject {
         guard !recorder.isRecording else { return }
         if queue.hasActive(.speech) {
             // Old speech is stale once a new recording starts. Drop pending
-            // answers; the ones already speaking are interrupted too.
-            Speak.stop()
+            // answers, and fade out the one already speaking instead of
+            // cutting it off abruptly.
+            if Speak.isPlaying {
+                Speak.fadeOutAndStop()
+                interruptedSpeech = true
+            } else {
+                Speak.stop()
+            }
             queue.cancel(lane: .speech)
         }
         lastError = nil
@@ -285,6 +293,12 @@ final class AppModel: ObservableObject {
         queue.enqueue(
             lane: .speech, kind: .speech, title: "Speak answer"
         ) {
+            let interrupted = self.interruptedSpeech
+            self.interruptedSpeech = false
+            if interrupted {
+                // Cancellation propagates: a dropped job must never speak.
+                try await Task.sleep(for: SpeechTiming.waitBeforeAnswer(interrupted: true))
+            }
             try await Speak.say(text, settings: settings)
             try Task.checkCancellation()
         }
