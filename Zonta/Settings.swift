@@ -120,6 +120,9 @@ struct Settings: Codable, Equatable {
     var ttsVoice: String
     var ttsLanguage: String
 
+    // Which physical key runs which action
+    var hotkeys: HotkeyBindings
+
     /// Explicit memberwise init: the custom decoder below suppresses the
     /// synthesized one that `defaults` relies on.
     init(
@@ -129,7 +132,7 @@ struct Settings: Codable, Equatable {
         chatLLM: LLMConfig, chatPrompt: String,
         translateLLM: LLMConfig, translatePrompt: String,
         ttsBaseURL: String, ttsAPIKey: String, ttsModel: String,
-        ttsVoice: String, ttsLanguage: String
+        ttsVoice: String, ttsLanguage: String, hotkeys: HotkeyBindings
     ) {
         self.whisperBaseURL = whisperBaseURL
         self.whisperAPIKey = whisperAPIKey
@@ -147,6 +150,7 @@ struct Settings: Codable, Equatable {
         self.ttsModel = ttsModel
         self.ttsVoice = ttsVoice
         self.ttsLanguage = ttsLanguage
+        self.hotkeys = hotkeys
     }
 
     static let defaults = Settings(
@@ -191,7 +195,8 @@ struct Settings: Codable, Equatable {
         ttsAPIKey: "",
         ttsModel: "supertonic-3",
         ttsVoice: "voice one",
-        ttsLanguage: ""
+        ttsLanguage: "",
+        hotkeys: .defaults
     )
 
     private static let key = "settings.v4"
@@ -205,6 +210,7 @@ struct Settings: Codable, Equatable {
         case chatLLM, chatPrompt
         case translateLLM, translatePrompt
         case ttsBaseURL, ttsAPIKey, ttsModel, ttsVoice, ttsLanguage
+        case hotkeys
     }
 
     /// Old blobs have no `whisperPrompt`. Missing keys fall back to defaults
@@ -228,6 +234,7 @@ struct Settings: Codable, Equatable {
         ttsModel = try c.decodeIfPresent(String.self, forKey: .ttsModel) ?? d.ttsModel
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice) ?? d.ttsVoice
         ttsLanguage = try c.decodeIfPresent(String.self, forKey: .ttsLanguage) ?? d.ttsLanguage
+        hotkeys = try c.decodeIfPresent(HotkeyBindings.self, forKey: .hotkeys) ?? d.hotkeys
     }
 
     /// Old builds shipped "M1" as the default voice. Move that (and an empty
