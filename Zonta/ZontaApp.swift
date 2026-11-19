@@ -75,18 +75,28 @@ final class AppModel: ObservableObject {
         // window or prompt when the grants are already there — a new window
         // on every launch is what made this feel like a permission loop.
         LocalNetwork.requestAccess()
-        hotkey.onGlobeDown = { [weak self] in self?.begin(.chat) }
-        hotkey.onGlobeUp = { [weak self] in self?.end() }
-        hotkey.onGlobeDoubleTap = { [weak self] in self?.newChatThread() }
-        hotkey.onRightCommandDown = { [weak self] in self?.begin(.dictate) }
-        hotkey.onRightCommandUp = { [weak self] in self?.end() }
-        hotkey.onRightCommandCancel = { [weak self] in self?.cancel() }
-        hotkey.onRightOptionDown = { [weak self] in self?.begin(.translate) }
-        hotkey.onRightOptionUp = { [weak self] in self?.end() }
-        hotkey.onRightOptionCancel = { [weak self] in self?.cancel() }
+        hotkey.onDown = { [weak self] key in self?.handleHotkeyDown(key) }
+        hotkey.onUp = { [weak self] _ in self?.end() }
+        hotkey.onCancel = { [weak self] _ in self?.cancel() }
+        hotkey.onDoubleTap = { [weak self] _ in self?.newChatThread() }
+        applyHotkeyBindings()
         hotkey.start()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         AppLog.shared.info("Zonta \(version) booted", subsystem: "App")
+    }
+
+    /// Double-tap starts a new thread on whichever key currently holds chat.
+    private func applyHotkeyBindings() {
+        hotkey.configure(doubleTapKeys: settings.hotkeys.keys(for: .chat))
+    }
+
+    private func handleHotkeyDown(_ key: HotkeyKey) {
+        switch settings.hotkeys.action(for: key) {
+        case .chat: begin(.chat)
+        case .dictate: begin(.dictate)
+        case .translate: begin(.translate)
+        case .off: break
+        }
     }
 
     // MARK: - Recording
@@ -383,6 +393,7 @@ final class AppModel: ObservableObject {
 
     func update(_ settings: Settings) {
         self.settings = settings
+        applyHotkeyBindings()
     }
 
     private func handleError(_ context: String, _ error: Error) {
