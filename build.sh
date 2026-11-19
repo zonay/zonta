@@ -35,6 +35,7 @@ swiftc -O -parse-as-library -module-cache-path "$PWD/build/ModuleCache" \
   -framework AppKit -framework SwiftUI -framework AVFoundation \
   -framework ApplicationServices -framework CoreGraphics -framework Network \
   -framework UserNotifications \
+  -framework CoreAudio -framework AudioToolbox \
   -o "$BIN/Zonta" \
   Zonta/*.swift
 
