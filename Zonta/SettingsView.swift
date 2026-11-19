@@ -7,6 +7,7 @@ struct SettingsView: View {
         case chat = "Chat"
         case translate = "Translate"
         case speech = "Speech"
+        case shortcuts = "Shortcuts"
 
         var id: String { rawValue }
 
@@ -17,6 +18,7 @@ struct SettingsView: View {
             case .chat: return "bubble.left.and.bubble.right"
             case .translate: return "character.book.closed"
             case .speech: return "speaker.wave.2"
+            case .shortcuts: return "keyboard"
             }
         }
     }
@@ -62,6 +64,7 @@ struct SettingsView: View {
                 case .chat: chatFields
                 case .translate: translateFields
                 case .speech: speechFields
+                case .shortcuts: shortcutFields
                 }
             }
             .formStyle(.grouped)
@@ -94,7 +97,7 @@ struct SettingsView: View {
                             Capsule().fill(model.phase == .error ? Color.red.opacity(0.20) : Theme.accentSoft)
                         )
                 }
-                Text("Globe ask · Right ⌘ dictate · Right ⌥ translate")
+                Text(hotkeySummary)
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
                 if let error = model.lastError {
@@ -124,6 +127,20 @@ struct SettingsView: View {
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 4)
+    }
+
+    /// One line describing the current key assignments for the header.
+    private var hotkeySummary: String {
+        let b = settings.hotkeys
+        let active: [(String, HotkeyAction)] = [
+            ("Globe", b.globe),
+            ("Right ⌘", b.rightCommand),
+            ("Right ⌥", b.rightOption),
+        ].filter { $0.1 != .off }
+        if active.isEmpty { return "All hotkeys off" }
+        return active
+            .map { "\($0.0) \($0.1.label.lowercased())" }
+            .joined(separator: " · ")
     }
 
     // MARK: - Tabs
@@ -346,6 +363,31 @@ struct SettingsView: View {
         testSection(.speech, action: "Speak a test phrase") {
             try await Speak.say("Testing. One, two, three.", settings: settings)
             return Result(ok: true, message: "Spoken with voice \(settings.ttsVoice).")
+        }
+    }
+
+    @ViewBuilder
+    private var shortcutFields: some View {
+        Section {
+            Picker("Globe", selection: $settings.hotkeys.globe) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+            Picker("Right ⌘", selection: $settings.hotkeys.rightCommand) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+            Picker("Right ⌥", selection: $settings.hotkeys.rightOption) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+        } header: {
+            Label("Keyboard shortcuts", systemImage: "keyboard")
+        } footer: {
+            Text("Double-tap the Chat key to start a new thread. Choose Off to disable a key. Changes apply as soon as you save.")
         }
     }
 
