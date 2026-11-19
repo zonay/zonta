@@ -4,6 +4,25 @@ import Foundation
 enum Speak {
     private static var player: AVAudioPlayer?
     private static let lock = NSLock()
+    private static var fadeTask: Task<Void, Never>?
+
+    @MainActor static var isPlaying: Bool { player?.isPlaying ?? false }
+
+    /// Eases the current answer down to silence, then stops it. An existing
+    /// fade is cancelled first so only the latest interruption wins.
+    @MainActor static func fadeOutAndStop() {
+        guard player != nil else { return }
+        fadeTask?.cancel()
+        let from = player?.volume ?? 1
+        fadeTask = Task { @MainActor in
+            let fader = SpeechFade { level in
+                MainActor.assumeIsolated { player?.volume = level }
+            }
+            await fader.run(from: from)
+            guard !Task.isCancelled else { return }
+            hardStop()
+        }
+    }
 
     /// Synthesises `text` on the configured speech service and plays it. A new
     /// call stops the previous one.
@@ -49,7 +68,13 @@ enum Speak {
         }
     }
 
-    static func stop() {
+    @MainActor static func stop() {
+        fadeTask?.cancel()
+        fadeTask = nil
+        hardStop()
+    }
+
+    @MainActor private static func hardStop() {
         lock.lock()
         player?.stop()
         player = nil
@@ -60,8 +85,9 @@ enum Speak {
     private static func play(_ file: URL) throws {
         let audio = try AVAudioPlayer(contentsOf: file)
         audio.prepareToPlay()
+        // A fade still in flight must not attenuate this new playback.
+        stop()
         lock.lock()
-        player?.stop()
         player = audio
         lock.unlock()
         audio.play()

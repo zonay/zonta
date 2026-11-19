@@ -50,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         waveTask?.cancel()
+        // Never leave the machine muted because a hold was active at quit.
+        AppModel.shared.forceRestoreAudioNow()
         AppLog.shared.info("Zonta terminated", subsystem: "App")
     }
 

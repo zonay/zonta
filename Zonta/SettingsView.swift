@@ -7,6 +7,7 @@ struct SettingsView: View {
         case chat = "Chat"
         case translate = "Translate"
         case speech = "Speech"
+        case settings = "Settings"
 
         var id: String { rawValue }
 
@@ -17,6 +18,7 @@ struct SettingsView: View {
             case .chat: return "bubble.left.and.bubble.right"
             case .translate: return "character.book.closed"
             case .speech: return "speaker.wave.2"
+            case .settings: return "keyboard"
             }
         }
     }
@@ -62,6 +64,7 @@ struct SettingsView: View {
                 case .chat: chatFields
                 case .translate: translateFields
                 case .speech: speechFields
+                case .settings: settingsFields
                 }
             }
             .formStyle(.grouped)
@@ -94,7 +97,7 @@ struct SettingsView: View {
                             Capsule().fill(model.phase == .error ? Color.red.opacity(0.20) : Theme.accentSoft)
                         )
                 }
-                Text("Globe ask · Right ⌘ dictate · Right ⌥ translate")
+                Text(hotkeySummary)
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
                 if let error = model.lastError {
@@ -124,6 +127,20 @@ struct SettingsView: View {
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 4)
+    }
+
+    /// One line describing the current key assignments for the header.
+    private var hotkeySummary: String {
+        let b = settings.hotkeys
+        let active: [(String, HotkeyAction)] = [
+            ("Globe", b.globe),
+            ("Right ⌘", b.rightCommand),
+            ("Right ⌥", b.rightOption),
+        ].filter { $0.1 != .off }
+        if active.isEmpty { return "All hotkeys off" }
+        return active
+            .map { "\($0.0) \($0.1.label.lowercased())" }
+            .joined(separator: " · ")
     }
 
     // MARK: - Tabs
@@ -162,17 +179,6 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var cleanupFields: some View {
-        Section {
-            Toggle("Clean up dictated text", isOn: Binding(
-                get: { model.cleanupEnabled },
-                set: { model.setCleanupEnabled($0) }
-            ))
-        } header: {
-            Label("Output", systemImage: "wand.and.stars")
-        } footer: {
-            Text("When off, the raw Whisper transcript is pasted with no cleanup call.")
-        }
-
         Section {
             TextField("Base URL", text: $settings.sanitizeLLM.baseURL)
             KeyField("API key", text: $settings.sanitizeLLM.apiKey)
@@ -305,17 +311,6 @@ struct SettingsView: View {
     @ViewBuilder
     private var speechFields: some View {
         Section {
-            Toggle("Speak answers out loud", isOn: Binding(
-                get: { model.speechEnabled },
-                set: { model.setSpeechEnabled($0) }
-            ))
-        } header: {
-            Label("Output", systemImage: "speaker.wave.2")
-        } footer: {
-            Text("When off, answers are still shown in the speech panel so you can read and copy them.")
-        }
-
-        Section {
             TextField("Base URL", text: $settings.ttsBaseURL)
             KeyField("API key", text: $settings.ttsAPIKey)
             TextField("Model", text: $settings.ttsModel)
@@ -346,6 +341,50 @@ struct SettingsView: View {
         testSection(.speech, action: "Speak a test phrase") {
             try await Speak.say("Testing. One, two, three.", settings: settings)
             return Result(ok: true, message: "Spoken with voice \(settings.ttsVoice).")
+        }
+    }
+
+    @ViewBuilder
+    private var settingsFields: some View {
+        Section {
+            Picker("Globe", selection: $settings.hotkeys.globe) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+            Picker("Right ⌘", selection: $settings.hotkeys.rightCommand) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+            Picker("Right ⌥", selection: $settings.hotkeys.rightOption) {
+                ForEach(HotkeyAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+        } header: {
+            Label("Keyboard shortcuts", systemImage: "keyboard")
+        } footer: {
+            Text("Double-tap the Chat key to start a new thread. Choose Off to disable a key. Changes apply as soon as you save.")
+        }
+
+        Section {
+            Toggle("Speak answers out loud", isOn: Binding(
+                get: { model.speechEnabled },
+                set: { model.setSpeechEnabled($0) }
+            ))
+            Toggle("Clean up dictated text", isOn: Binding(
+                get: { model.cleanupEnabled },
+                set: { model.setCleanupEnabled($0) }
+            ))
+            Toggle("Duck other audio while recording", isOn: Binding(
+                get: { model.duckAudioEnabled },
+                set: { model.setDuckAudioEnabled($0) }
+            ))
+        } header: {
+            Label("Switches", systemImage: "switch.2")
+        } footer: {
+            Text("Ducking eases the system volume down while a recording is in progress, then brings it back when you release the key.")
         }
     }
 

@@ -36,12 +36,17 @@ final class AppModel: ObservableObject {
     @Published var speechEnabled: Bool = SpeechOutput.enabled
     /// Whether dictated text is cleaned up before pasting. Off pastes raw text.
     @Published var cleanupEnabled: Bool = CleanupOutput.enabled
+    /// Whether system audio eases down while a recording is in progress.
+    @Published var duckAudioEnabled: Bool = AudioDuckOutput.enabled
 
     private let hotkey = Hotkey()
     private let recorder = Recorder()
+    private let ducker = AudioDucker()
     private let queue = JobQueue.shared
     private var didBoot = false
     private var mode: Mode?
+    /// The next answer followed an interrupted one, so let it settle first.
+    private var interruptedSpeech = false
     /// Source of truth for the hold-to-talk state. Kept separate from `phase`
     /// so a job finishing can never pretend a new recording ended.
     @Published private var isRecording = false
@@ -57,6 +62,8 @@ final class AppModel: ObservableObject {
     func boot() {
         guard !didBoot else { return }
         didBoot = true
+        // Repair a level left lowered by a crash or force quit.
+        AudioDucker.restoreSavedBaseline()
         queue.onStateChange = { [weak self] in self?.refreshPhase() }
         queue.onError = { [weak self] title, message in
             self?.lastError = "\(title): \(message)"
@@ -75,18 +82,39 @@ final class AppModel: ObservableObject {
         // window or prompt when the grants are already there — a new window
         // on every launch is what made this feel like a permission loop.
         LocalNetwork.requestAccess()
-        hotkey.onGlobeDown = { [weak self] in self?.begin(.chat) }
-        hotkey.onGlobeUp = { [weak self] in self?.end() }
-        hotkey.onGlobeDoubleTap = { [weak self] in self?.newChatThread() }
-        hotkey.onRightCommandDown = { [weak self] in self?.begin(.dictate) }
-        hotkey.onRightCommandUp = { [weak self] in self?.end() }
-        hotkey.onRightCommandCancel = { [weak self] in self?.cancel() }
-        hotkey.onRightOptionDown = { [weak self] in self?.begin(.translate) }
-        hotkey.onRightOptionUp = { [weak self] in self?.end() }
-        hotkey.onRightOptionCancel = { [weak self] in self?.cancel() }
+        hotkey.onDown = { [weak self] key in self?.handleHotkeyDown(key) }
+        hotkey.onUp = { [weak self] key in self?.handleHotkeyUp(key) }
+        hotkey.onCancel = { [weak self] key in self?.handleHotkeyCancel(key) }
+        hotkey.onDoubleTap = { [weak self] _ in self?.newChatThread() }
+        applyHotkeyBindings()
         hotkey.start()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         AppLog.shared.info("Zonta \(version) booted", subsystem: "App")
+    }
+
+    /// Double-tap starts a new thread on whichever key currently holds chat.
+    private func applyHotkeyBindings() {
+        hotkey.configure(doubleTapKeys: settings.hotkeys.keys(for: .chat))
+    }
+
+    private func handleHotkeyDown(_ key: HotkeyKey) {
+        switch settings.hotkeys.action(for: key) {
+        case .chat: begin(.chat)
+        case .dictate: begin(.dictate)
+        case .translate: begin(.translate)
+        case .off: break
+        }
+    }
+
+    /// An Off key must not end a recording started by another key.
+    private func handleHotkeyUp(_ key: HotkeyKey) {
+        guard settings.hotkeys.isEnabled(key) else { return }
+        end()
+    }
+
+    private func handleHotkeyCancel(_ key: HotkeyKey) {
+        guard settings.hotkeys.isEnabled(key) else { return }
+        cancel()
     }
 
     // MARK: - Recording
@@ -96,11 +124,21 @@ final class AppModel: ObservableObject {
         // A job can change `phase` at any moment; ignoring that here is what
         // prevents a second message from leaving "Listening…" stuck.
         guard !recorder.isRecording else { return }
-        if queue.hasActive(.speech) {
-            // Old speech is stale once a new recording starts. Drop pending
-            // answers; the ones already speaking are interrupted too.
+        // Playback lasts far longer than the speech job that started it, so
+        // decide from the actual player as well as the queue.
+        switch InterruptionDecision.decide(
+            isSpeaking: Speak.isPlaying,
+            hasActiveSpeechJob: queue.hasActive(.speech)
+        ) {
+        case .fade:
+            Speak.fadeOutAndStop()
+            interruptedSpeech = true
+            queue.cancel(lane: .speech)
+        case .stop:
             Speak.stop()
             queue.cancel(lane: .speech)
+        case .none:
+            break
         }
         lastError = nil
         if mode != .chat { Pasteboard.rememberTarget() }
@@ -109,6 +147,7 @@ final class AppModel: ObservableObject {
             self.mode = mode
             isRecording = true
             refreshPhase()
+            if duckAudioEnabled { ducker.duck() }
         } catch {
             handleError("Recorder", error)
         }
@@ -116,6 +155,7 @@ final class AppModel: ObservableObject {
 
     func end() {
         guard mode != nil, recorder.isRecording else { return }
+        ducker.restore()
         let duration = recorder.recordedDuration
         let selectedMode = mode!
         guard let file = recorder.stop() else {
@@ -129,6 +169,7 @@ final class AppModel: ObservableObject {
         refreshPhase()
 
         guard duration >= Self.minimumSpeech else {
+            interruptedSpeech = false
             AppLog.shared.warning(
                 "Ignored a \(String(format: "%.1f", duration))s recording — too short.",
                 subsystem: "Recorder"
@@ -150,6 +191,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             let question = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !question.isEmpty else {
+                self.interruptedSpeech = false
                 AppLog.shared.warning("Whisper returned an empty transcript.", subsystem: "Whisper")
                 return
             }
@@ -164,6 +206,8 @@ final class AppModel: ObservableObject {
     /// A shortcut was pressed while the modifier was held. Drop the recording.
     func cancel() {
         if recorder.isRecording { _ = recorder.stop() }
+        ducker.restore()
+        interruptedSpeech = false
         mode = nil
         isRecording = false
         refreshPhase()
@@ -172,6 +216,7 @@ final class AppModel: ObservableObject {
     /// User-facing cancel for a long Hermes request (from the debug window).
     func cancelActiveJobs() {
         Speak.stop()
+        interruptedSpeech = false
         queue.cancelAll()
         refreshPhase()
     }
@@ -247,6 +292,7 @@ final class AppModel: ObservableObject {
             if self.speechEnabled {
                 self.enqueueSpeech(answer, settings: settings)
             } else {
+                self.interruptedSpeech = false
                 AppLog.shared.debug("Speech is off; answer was only logged.", subsystem: "Speech")
             }
         }
@@ -256,6 +302,12 @@ final class AppModel: ObservableObject {
         queue.enqueue(
             lane: .speech, kind: .speech, title: "Speak answer"
         ) {
+            let interrupted = self.interruptedSpeech
+            self.interruptedSpeech = false
+            if interrupted {
+                // Cancellation propagates: a dropped job must never speak.
+                try await Task.sleep(for: SpeechTiming.waitBeforeAnswer(interrupted: true))
+            }
             try await Speak.say(text, settings: settings)
             try Task.checkCancellation()
         }
@@ -363,6 +415,7 @@ final class AppModel: ObservableObject {
             AppLog.shared.info("Spoken answers enabled", subsystem: "Speech")
         } else {
             Speak.stop()
+            interruptedSpeech = false
             queue.cancel(lane: .speech)
             AppLog.shared.info(
                 "Spoken answers disabled; answers will only appear in the speech panel.",
@@ -381,8 +434,25 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// Best-effort synchronous restore when the app is about to quit.
+    func forceRestoreAudioNow() {
+        ducker.forceRestoreNow()
+    }
+
+    func setDuckAudioEnabled(_ enabled: Bool) {
+        guard enabled != duckAudioEnabled else { return }
+        duckAudioEnabled = enabled
+        AudioDuckOutput.enabled = enabled
+        if !enabled { ducker.restore() }
+        AppLog.shared.info(
+            enabled ? "Audio ducking enabled" : "Audio ducking disabled; audio stays at its current level.",
+            subsystem: "Audio"
+        )
+    }
+
     func update(_ settings: Settings) {
         self.settings = settings
+        applyHotkeyBindings()
     }
 
     private func handleError(_ context: String, _ error: Error) {
@@ -390,6 +460,8 @@ final class AppModel: ObservableObject {
         lastError = "\(context): \(message)"
         AppLog.shared.error("\(context): \(message)", subsystem: "App")
         if recorder.isRecording { _ = recorder.stop() }
+        ducker.restore()
+        interruptedSpeech = false
     }
 }
 
