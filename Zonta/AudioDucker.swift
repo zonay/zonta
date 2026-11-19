@@ -10,9 +10,15 @@ final class AudioDucker {
     static let fadeDuration: Duration = .milliseconds(250)
     static let steps: Int = 10
 
+    private nonisolated static let baselineKey = "audio.duck.baseline.v1"
+
     private let readVolume: () -> Float32?
     private let writeVolume: (Float32) -> Void
-    private var original: Float32?
+    /// The true system level. Kept until a restore ramp finishes uninterrupted,
+    /// so a new hold during a restore cannot capture a mid-ramp value.
+    private var baseline: Float32?
+    private var duckActive = false
+    private var rampID = 0
     private var rampTask: Task<Void, Never>?
 
     init(
@@ -23,32 +29,87 @@ final class AudioDucker {
         self.writeVolume = writeVolume
     }
 
-    var isDucked: Bool { original != nil }
+    var isDucked: Bool { duckActive }
 
     func duck() {
-        guard original == nil, let current = readVolume(), current > 0 else { return }
-        original = current
-        ramp(from: current, to: 0)
+        guard let current = readVolume(), current > 0 else { return }
+        if baseline == nil {
+            baseline = current
+            Self.saveBaseline(current)
+        }
+        duckActive = true
+        ramp(from: current, to: 0, id: nextRampID())
     }
 
     func restore() {
-        guard let target = original else { return }
-        original = nil
+        guard let target = baseline else { return }
+        duckActive = false
+        let id = nextRampID()
         // Start from the live level: a restore mid-fade must not jump to zero.
-        ramp(from: readVolume() ?? 0, to: target)
+        ramp(from: readVolume() ?? 0, to: target, id: id) { [weak self] in
+            guard let self, self.rampID == id else { return }
+            self.baseline = nil
+            Self.saveBaseline(nil)
+        }
     }
 
-    private func ramp(from start: Float32, to target: Float32) {
+    /// Synchronous, best-effort restore for app termination. A ramp in flight
+    /// is cancelled and the captured level is written immediately.
+    func forceRestoreNow() {
+        rampTask?.cancel()
+        rampTask = nil
+        rampID += 1
+        if let target = baseline {
+            writeVolume(target)
+            baseline = nil
+            Self.saveBaseline(nil)
+        }
+        duckActive = false
+    }
+
+    private func nextRampID() -> Int {
+        rampID += 1
+        return rampID
+    }
+
+    private func ramp(from start: Float32, to target: Float32, id: Int, onComplete: (() -> Void)? = nil) {
         rampTask?.cancel()
         rampTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for step in 1...Self.steps {
                 try? await Task.sleep(for: .milliseconds(25))
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.rampID == id else { return }
                 let t = Float32(step) / Float32(Self.steps)
                 self.writeVolume(start + (target - start) * t)
             }
+            onComplete?()
         }
+    }
+
+    // MARK: - Persistence (crash repair)
+
+    nonisolated static func saveBaseline(_ value: Float32?, defaults: UserDefaults = .standard) {
+        if let value {
+            defaults.set(Double(value), forKey: baselineKey)
+        } else {
+            defaults.removeObject(forKey: baselineKey)
+        }
+    }
+
+    nonisolated static func savedBaseline(defaults: UserDefaults = .standard) -> Float32? {
+        guard let value = defaults.object(forKey: baselineKey) as? Double else { return nil }
+        return Float32(value)
+    }
+
+    nonisolated static func clearSavedBaseline(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: baselineKey)
+    }
+
+    /// Reapplies a baseline left behind by a crash or force quit on next launch.
+    nonisolated static func restoreSavedBaseline(defaults: UserDefaults = .standard) {
+        guard let value = savedBaseline(defaults: defaults) else { return }
+        setSystemVolume(value)
+        clearSavedBaseline(defaults: defaults)
     }
 
     // MARK: - CoreAudio

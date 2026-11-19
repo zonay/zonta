@@ -60,6 +60,8 @@ final class AppModel: ObservableObject {
     func boot() {
         guard !didBoot else { return }
         didBoot = true
+        // Repair a level left lowered by a crash or force quit.
+        AudioDucker.restoreSavedBaseline()
         queue.onStateChange = { [weak self] in self?.refreshPhase() }
         queue.onError = { [weak self] title, message in
             self?.lastError = "\(title): \(message)"
@@ -406,6 +408,11 @@ final class AppModel: ObservableObject {
             enabled ? "Cleanup enabled" : "Cleanup disabled; raw transcripts will be pasted.",
             subsystem: "Dictate"
         )
+    }
+
+    /// Best-effort synchronous restore when the app is about to quit.
+    func forceRestoreAudioNow() {
+        ducker.forceRestoreNow()
     }
 
     func setDuckAudioEnabled(_ enabled: Bool) {
