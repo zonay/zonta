@@ -50,6 +50,18 @@ enum CleanupOutput {
     }
 }
 
+/// Whether system audio is ducked while a recording is in progress.
+/// Kept outside `Settings` like the other toggles so changing it never
+/// rewrites the settings blob or drops the chat session.
+enum AudioDuckOutput {
+    private static let key = "audio.duck.v1"
+
+    static var enabled: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? false }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+}
+
 /// The conversation the chat feature is currently in.
 ///
 /// Hermes keeps the chat history in its own session store, not in the request

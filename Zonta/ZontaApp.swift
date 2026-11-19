@@ -36,9 +36,12 @@ final class AppModel: ObservableObject {
     @Published var speechEnabled: Bool = SpeechOutput.enabled
     /// Whether dictated text is cleaned up before pasting. Off pastes raw text.
     @Published var cleanupEnabled: Bool = CleanupOutput.enabled
+    /// Whether system audio eases down while a recording is in progress.
+    @Published var duckAudioEnabled: Bool = AudioDuckOutput.enabled
 
     private let hotkey = Hotkey()
     private let recorder = Recorder()
+    private let ducker = AudioDucker()
     private let queue = JobQueue.shared
     private var didBoot = false
     private var mode: Mode?
@@ -130,6 +133,7 @@ final class AppModel: ObservableObject {
             self.mode = mode
             isRecording = true
             refreshPhase()
+            if duckAudioEnabled { ducker.duck() }
         } catch {
             handleError("Recorder", error)
         }
@@ -137,6 +141,7 @@ final class AppModel: ObservableObject {
 
     func end() {
         guard mode != nil, recorder.isRecording else { return }
+        ducker.restore()
         let duration = recorder.recordedDuration
         let selectedMode = mode!
         guard let file = recorder.stop() else {
@@ -185,6 +190,7 @@ final class AppModel: ObservableObject {
     /// A shortcut was pressed while the modifier was held. Drop the recording.
     func cancel() {
         if recorder.isRecording { _ = recorder.stop() }
+        ducker.restore()
         mode = nil
         isRecording = false
         refreshPhase()
@@ -402,6 +408,17 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func setDuckAudioEnabled(_ enabled: Bool) {
+        guard enabled != duckAudioEnabled else { return }
+        duckAudioEnabled = enabled
+        AudioDuckOutput.enabled = enabled
+        if !enabled { ducker.restore() }
+        AppLog.shared.info(
+            enabled ? "Audio ducking enabled" : "Audio ducking disabled; audio stays at its current level.",
+            subsystem: "Audio"
+        )
+    }
+
     func update(_ settings: Settings) {
         self.settings = settings
         applyHotkeyBindings()
@@ -412,6 +429,7 @@ final class AppModel: ObservableObject {
         lastError = "\(context): \(message)"
         AppLog.shared.error("\(context): \(message)", subsystem: "App")
         if recorder.isRecording { _ = recorder.stop() }
+        ducker.restore()
     }
 }
 

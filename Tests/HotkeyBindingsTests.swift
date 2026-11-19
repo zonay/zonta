@@ -4,6 +4,7 @@ import Foundation
 struct HotkeyBindingsTests {
     static func main() async throws {
         check(HotkeyBindings.defaults.globe == .chat, "default globe")
+        check(AudioDuckOutput.enabled == false, "audio duck defaults off")
         check(HotkeyBindings.defaults.rightCommand == .dictate, "default right command")
         check(HotkeyBindings.defaults.rightOption == .translate, "default right option")
 
