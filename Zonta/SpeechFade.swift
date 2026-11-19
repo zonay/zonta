@@ -1,5 +1,18 @@
 import Foundation
 
+/// Whether a new recording should fade the current answer, stop a pending
+/// speech job outright, or do nothing. Playback outlives the job that started
+/// it, so `isSpeaking` — not the job queue — is what matters here.
+enum InterruptionDecision: Equatable {
+    case fade, stop, none
+
+    static func decide(isSpeaking: Bool, hasActiveSpeechJob: Bool) -> InterruptionDecision {
+        if isSpeaking { return .fade }
+        if hasActiveSpeechJob { return .stop }
+        return .none
+    }
+}
+
 /// How long the next answer waits before it speaks.
 enum SpeechTiming {
     static func waitBeforeAnswer(interrupted: Bool) -> Duration {

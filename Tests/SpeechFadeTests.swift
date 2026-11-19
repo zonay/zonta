@@ -11,6 +11,9 @@ struct SpeechFadeTests {
         check(SpeechFade.levels(from: 0.5).first! == 0.45, "first step starts at the current level")
         check(SpeechTiming.waitBeforeAnswer(interrupted: true) == .seconds(1.5), "interrupted answer waits 1.5s")
         check(SpeechTiming.waitBeforeAnswer(interrupted: false) == .zero, "normal answer has no wait")
+        check(InterruptionDecision.decide(isSpeaking: true, hasActiveSpeechJob: false) == .fade, "playing answer fades even with no active speech job")
+        check(InterruptionDecision.decide(isSpeaking: false, hasActiveSpeechJob: true) == .stop, "pending speech job is hard-stopped")
+        check(InterruptionDecision.decide(isSpeaking: false, hasActiveSpeechJob: false) == .none, "no speech means no interruption")
 
         do {
             var writes: [Float] = []

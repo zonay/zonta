@@ -124,17 +124,21 @@ final class AppModel: ObservableObject {
         // A job can change `phase` at any moment; ignoring that here is what
         // prevents a second message from leaving "Listening…" stuck.
         guard !recorder.isRecording else { return }
-        if queue.hasActive(.speech) {
-            // Old speech is stale once a new recording starts. Drop pending
-            // answers, and fade out the one already speaking instead of
-            // cutting it off abruptly.
-            if Speak.isPlaying {
-                Speak.fadeOutAndStop()
-                interruptedSpeech = true
-            } else {
-                Speak.stop()
-            }
+        // Playback lasts far longer than the speech job that started it, so
+        // decide from the actual player as well as the queue.
+        switch InterruptionDecision.decide(
+            isSpeaking: Speak.isPlaying,
+            hasActiveSpeechJob: queue.hasActive(.speech)
+        ) {
+        case .fade:
+            Speak.fadeOutAndStop()
+            interruptedSpeech = true
             queue.cancel(lane: .speech)
+        case .stop:
+            Speak.stop()
+            queue.cancel(lane: .speech)
+        case .none:
+            break
         }
         lastError = nil
         if mode != .chat { Pasteboard.rememberTarget() }
@@ -165,6 +169,7 @@ final class AppModel: ObservableObject {
         refreshPhase()
 
         guard duration >= Self.minimumSpeech else {
+            interruptedSpeech = false
             AppLog.shared.warning(
                 "Ignored a \(String(format: "%.1f", duration))s recording — too short.",
                 subsystem: "Recorder"
@@ -186,6 +191,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             let question = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !question.isEmpty else {
+                self.interruptedSpeech = false
                 AppLog.shared.warning("Whisper returned an empty transcript.", subsystem: "Whisper")
                 return
             }
@@ -201,6 +207,7 @@ final class AppModel: ObservableObject {
     func cancel() {
         if recorder.isRecording { _ = recorder.stop() }
         ducker.restore()
+        interruptedSpeech = false
         mode = nil
         isRecording = false
         refreshPhase()
@@ -209,6 +216,7 @@ final class AppModel: ObservableObject {
     /// User-facing cancel for a long Hermes request (from the debug window).
     func cancelActiveJobs() {
         Speak.stop()
+        interruptedSpeech = false
         queue.cancelAll()
         refreshPhase()
     }
@@ -284,6 +292,7 @@ final class AppModel: ObservableObject {
             if self.speechEnabled {
                 self.enqueueSpeech(answer, settings: settings)
             } else {
+                self.interruptedSpeech = false
                 AppLog.shared.debug("Speech is off; answer was only logged.", subsystem: "Speech")
             }
         }
@@ -406,6 +415,7 @@ final class AppModel: ObservableObject {
             AppLog.shared.info("Spoken answers enabled", subsystem: "Speech")
         } else {
             Speak.stop()
+            interruptedSpeech = false
             queue.cancel(lane: .speech)
             AppLog.shared.info(
                 "Spoken answers disabled; answers will only appear in the speech panel.",
@@ -451,6 +461,7 @@ final class AppModel: ObservableObject {
         AppLog.shared.error("\(context): \(message)", subsystem: "App")
         if recorder.isRecording { _ = recorder.stop() }
         ducker.restore()
+        interruptedSpeech = false
     }
 }
 
